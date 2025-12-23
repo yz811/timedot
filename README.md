@@ -8,7 +8,7 @@
 
 **Time Dots** 不仅仅是一个待办事项列表。它将你的一天具象化为由“点”组成的网格。每一个点代表 10 分钟（可配置），每一行代表一小时。通过视觉化的方式，它帮助你对抗“时间盲区”，让时间的流逝变得可感知、可触摸。
 
-<img width="619" height="604" alt="image" src="https://github.com/user-attachments/assets/c4ce0d92-924c-4cb4-9dc2-5e62d21dedb6" />
+<img width="309" height="302" alt="image" src="https://github.com/user-attachments/assets/c4ce0d92-924c-4cb4-9dc2-5e62d21dedb6" />
 
 
 ## ✨ 主要特性 (Features)

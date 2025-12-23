@@ -4,7 +4,7 @@
 > **看见时间的流逝。**
 > 一个极简主义、高可视化的桌面时间管理工具，基于 Python 与 PyQt6 构建。
 
-![License](https://img.shields.io/badge/license-MIT-blue.svg) ![Python](https://img.shields.io/badge/python-3.8+-yellow.svg) ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-lightgrey.svg)
+![License](https://img.shields.io/badge/license-MIT-blue.svg) ![Python](https://img.shields.io/badge/python-3.8+-yellow.svg) ![Platform](https://img.shields.io/badge/platform-Windows-lightgrey.svg)
 
 **Time Dots** 不仅仅是一个待办事项列表。它将你的一天具象化为由“点”组成的网格。每一个点代表 10 分钟（可配置），每一行代表一小时。通过视觉化的方式，它帮助你对抗“时间盲区”，让时间的流逝变得可感知、可触摸。
 

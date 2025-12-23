@@ -1301,10 +1301,15 @@ class TimeDotsWidget(QWidget):
             gap = self.get_col_x_offset(c, col_unit)
             cx = c * col_unit + gap
             center_x = cx + rad
-            if abs(rel_x - center_x) < rad * 2.5:
+            
+            # [修改 1] 缩小列判定的水平范围：从 2.5倍半径 改为 1倍半径
+            # 只有鼠标水平位置严格在圆点宽度内时，才认为命中了该列
+            if abs(rel_x - center_x) <= 1.2*rad:
                 found_c = c
                 break
+                
         if found_c == -1: return -1
+        
         curr_y = self.current_content_rect.top() + top_m
         found_r = -1
         for r in range(rows):
@@ -1314,12 +1319,23 @@ class TimeDotsWidget(QWidget):
                 found_r = r
                 break
             curr_y += total_row_block
+            
         if found_r == -1: return -1
+        
         center = self.get_dot_abs_pos(found_r, found_c)
-        if (pos_f - center).manhattanLength() < rad * 2.5:
+        
+        # [修改 2] 缩小最终判定范围：使用严格的欧几里得距离
+        # 只有鼠标距离圆心的距离小于半径时，才算命中
+        # 原来的代码是 .manhattanLength() < rad * 2.5，范围是一个很大的菱形
+        dx = pos_f.x() - center.x()
+        dy = pos_f.y() - center.y()
+        
+        # 使用平方比较避免开根号，效率稍高且逻辑等价
+        if (dx*dx + dy*dy) <= rad*rad:
              idx = found_r*rd + found_c*inv
              if idx < s_off or idx >= e_off: return -1
              return idx
+             
         return -1
     
     def get_segment_at_pos(self, pos):
@@ -1495,20 +1511,18 @@ class TimeDotsWidget(QWidget):
             self.show()
 
     def loop(self):
+        # ---------------------------------------------------------
+        # 1. [原有逻辑] 鼠标交互与锁定状态处理 (保持不变)
+        # ---------------------------------------------------------
         global_pos = QCursor.pos()
         local_pos = self.mapFromGlobal(global_pos)
         
-        # 1. 基础命中测试 (用于唤醒 Hover)
-        # 注意：这里必须用当前的 rect 进行计算
         in_content = self.current_content_rect.contains(local_pos)
         
         target_hover = 0.0
         target_header = 0.0
         
         if self.is_locked:
-            # --- 锁定模式核心逻辑 ---
-            
-            # A. 状态机：计算是否应该显示控件 (Hover唤醒)
             if in_content:
                 self.hover_time_acc += 50 
                 if self.hover_time_acc > 1200: 
@@ -1517,25 +1531,19 @@ class TimeDotsWidget(QWidget):
                 self.hover_time_acc = 0
                 self.controls_visible = False
             
-            # B. 穿透控制：根据鼠标位置动态切换窗口属性 (Pixel-Perfect Click-Through)
-            desired_transparent = True # 默认应该是穿透的
+            desired_transparent = True 
             
             if self.controls_visible:
-                # 控件可见时：检查鼠标是否在红绿灯上
                 r, y, g = self.get_traffic_lights_rects()
-                # 稍微扩大一点判定范围(5px)，提升操作手感，防止鼠标快划时丢失焦点
                 hit_zone = r.united(y).united(g).adjusted(-5, -5, 5, 5)
-                
                 if hit_zone.contains(QPointF(local_pos)):
-                    desired_transparent = False # 在灯上 -> 实体化 (捕获点击)
+                    desired_transparent = False 
             
-            # C. 应用 Flag (仅当状态改变时调用 setWindowFlag + show，避免闪烁和性能开销)
             current_transparent = bool(self.windowFlags() & Qt.WindowType.WindowTransparentForInput)
             if current_transparent != desired_transparent:
                 self.setWindowFlag(Qt.WindowType.WindowTransparentForInput, desired_transparent)
                 self.show()
 
-            # D. 状态清理：如果处于穿透状态，强制清除所有内部元素的 Hover 高亮
             if desired_transparent:
                 if self.hovered_dot_idx != -1 or self.hovered_segment is not None or self.hovered_date is not None:
                     self.hovered_dot_idx = -1
@@ -1545,24 +1553,23 @@ class TimeDotsWidget(QWidget):
                     self.setCursor(Qt.CursorShape.ArrowCursor)
                     self.update()
 
-            # E. 设定动画目标
-            target_hover = 0.0 # 锁定下内容主体不展开
+            target_hover = 0.0 
             target_header = 1.0 if self.controls_visible else 0.0
             
         else:
-            # --- 非锁定模式逻辑 ---
             target_header = 1.0 if (in_content or self.config['sidebar_always_on']) else 0.0
             target_hover = 1.0 if (in_content or self.config['sidebar_always_on']) else 0.0
             self.controls_visible = False
             self.hover_time_acc = 0
             
-            # 确保非锁定模式下始终接收输入
             current_transparent = bool(self.windowFlags() & Qt.WindowType.WindowTransparentForInput)
             if current_transparent:
                 self.setWindowFlag(Qt.WindowType.WindowTransparentForInput, False)
                 self.show()
 
-        # --- 动画插值逻辑 (保持不变) ---
+        # ---------------------------------------------------------
+        # 2. [原有逻辑] 动画插值 (保持不变)
+        # ---------------------------------------------------------
         needs_repaint = False
         speed = 0.15
         
@@ -1582,7 +1589,9 @@ class TimeDotsWidget(QWidget):
             self.update_layout_dynamic()
             self.update()
 
-        # --- 时间/声音检查逻辑 (保持不变) ---
+        # ---------------------------------------------------------
+        # 3. [原有逻辑] 日期变更检查 (保持不变)
+        # ---------------------------------------------------------
         now_date = QDate.currentDate()
         if self.last_date_check != now_date:
             if self.current_view_date == self.last_date_check:
@@ -1590,25 +1599,53 @@ class TimeDotsWidget(QWidget):
                 self.update()
             self.last_date_check = now_date
 
+        # ---------------------------------------------------------
+        # 4. [修正后] 声音检查逻辑
+        # ---------------------------------------------------------
         now = datetime.now()
         curr_min = now.minute
+
         if self.last_sound_min != curr_min:
             self.last_sound_min = curr_min
-            if self.current_view_date == QDate.currentDate():
-                data = self.get_current_data()
-                base_dt = datetime.combine(now.date(), time(self.config['start_time'].hour, 0))
-                inv = self.config['interval']
-                passed_mins = (now - base_dt).total_seconds() / 60
+            
+            # [修正] 永远获取 "今天" 的数据，不论当前视图在看哪一天
+            today_str = now_date.toString(Qt.DateFormat.ISODate)
+            
+            if today_str in self.data_store:
+                data = self.data_store[today_str]
+                current_day_min = now.hour * 60 + now.minute
+                
+                # --- 检查 Segments ---
                 for s in data['segments']:
-                    seg_end_mins = s['end'] + inv
-                    if abs(passed_mins - seg_end_mins) < 1.0: 
+                    if 'end_abs' in s:
+                        end_min = s['end_abs']
+                    else:
+                        # [重要修正] s['end'] 存储的是分钟数，不是索引，不需要再乘 interval
+                        # 之前的错误公式：start_base + s['end'] * inv
+                        # 修正后的公式：start_base + s['end']
+                        st = self.config['start_time']
+                        start_base = st.hour * 60 + st.minute
+                        end_min = start_base + s['end']
+                    
+                    if int(end_min) == current_day_min: 
                         play_sound_by_type(self.config['sound_timer'])
-                curr_dot_idx = int(passed_mins // inv)
-                if str(curr_dot_idx) in data['notes']:
-                    dot_start_time = curr_dot_idx * inv
-                    if abs(passed_mins - dot_start_time) < 1.0:
-                        play_sound_by_type(self.config['sound_note'])
+                
+                # --- 检查 Notes ---
+                inv = self.config['interval']
+                # Note 检查逻辑：当前分钟正好是 Interval 的倍数
+                if current_day_min % inv == 0:
+                    st = self.config['start_time']
+                    start_base = st.hour * 60 + st.minute
+                    
+                    if current_day_min >= start_base:
+                        # s['end'] 是分钟数，同理 Note 的 key 也是分钟数索引
+                        curr_offset_min = int(current_day_min - start_base)
+                        if str(curr_offset_min) in data['notes']:
+                            play_sound_by_type(self.config['sound_note'])
 
+        # ---------------------------------------------------------
+        # 5. [原有逻辑] 界面微秒级刷新 (保持不变)
+        # ---------------------------------------------------------
         if self.current_view_date == QDate.currentDate():
             if now.microsecond < 150000: 
                 self.update()
@@ -1829,31 +1866,41 @@ class TimeDotsWidget(QWidget):
         thickness = 2.5 
         if is_hovered or is_preview: thickness = 4.0
         
-        # [核心修改] 使用新参数计算 Y 轴偏移
         offset_a = self.config.get('seg_base_offset', 6)
         step_b = self.config.get('seg_layer_step', 12)
-        # 线的中心位置 = 圆点中心 + 半径 + A + 层级*B
         y_offset_from_center = rad + offset_a + (layer * step_b)
+
+        # 视觉间隙 padding (保持不变，用于解决首尾相连重叠问题)
+        seg_padding = 2.0 
 
         s_row = start_idx // rd
         e_row = end_idx // rd
+        
         for r in range(s_row, e_row + 1):
             row_s = r * rd; row_e = (r+1) * rd
             d_s = max(start_idx, row_s); d_e = min(end_idx, row_e)
             if d_s >= d_e: continue 
+            
+            # --- 计算起点 X1 ---
             c_s = (d_s % rd) // inv
             p1 = self.get_dot_abs_pos(r, c_s)
-            x1 = p1.x() - rad - (sp/2) 
-            if d_e == row_e:
-                p_end = self.get_dot_abs_pos(r, (rd//inv)-1)
-                x2 = p_end.x() + rad + sp/2
-            else:
-                c_e = (d_e % rd) // inv
-                p_end = self.get_dot_abs_pos(r, c_e)
-                x2 = p_end.x() - rad - sp/2
-                
+            # 起点：圆心 - 半径 - 半个间距 + padding
+            x1 = p1.x() - rad - (sp/2) + seg_padding
+            
+            # --- 计算终点 X2 [核心修改] ---
+            # 逻辑变更：不再使用 d_e (下一个点) 的左边缘，而是使用 d_e - 1 (当前段最后一个点) 的右边缘。
+            # 这样，无论后面是否有宽间距(Gap)或换行，线段都会精确停在当前点的结束位置。
+            last_dot_idx = d_e - 1
+            c_e = (last_dot_idx % rd) // inv
+            p_end = self.get_dot_abs_pos(r, c_e)
+            
+            # 终点：圆心 + 半径 + 半个间距 - padding
+            x2 = p_end.x() + rad + (sp/2) - seg_padding
+
+            # y坐标
             y = p1.y() + y_offset_from_center
             
+            # 绘制逻辑 (保持不变)
             pt.save()
             if is_hovered or is_preview:
                 pen_outline = QPen(QColor(255, 255, 255, 200))

@@ -109,4 +109,4 @@ Time Dots 采用了独特的交互方式以保持界面简洁：
 本项目基于 [MIT License](LICENSE) 开源。
 
 ---
-*Created with ❤️ by [Your Name]*
+*Created with ❤️ by 张一堃 & Gemini

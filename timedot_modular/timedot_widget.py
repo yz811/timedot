@@ -41,6 +41,7 @@ class TimeDotsWidget(QWidget):
             'past_date_color': QColor(120, 120, 120, 150),
             'future_date_color': QColor(200, 200, 200, 255),
             'sidebar_always_on': False,
+            'time_scale_always_on': False,
             'sound_timer': 2,
             'sound_note': 1,
             # [鏂板] 鏃堕棿鍧楀竷灞€鍙傛暟
@@ -98,6 +99,9 @@ class TimeDotsWidget(QWidget):
         self.day_resize_selected_idx = -1
         self.day_resize_anim = 0.0
         self.day_resize_cleanup_pending = False
+        self.day_resize_anchor_mode = None
+        self.day_resize_anchor_idx = -1
+        self.day_resize_anchor_global = None
         self.pending_boundary_idx = -1
         self.pending_boundary_mode = None
         self.pending_boundary_pos = QPoint()
@@ -227,6 +231,7 @@ class TimeDotsWidget(QWidget):
         }
         self.config['start_time'] = start_t
         self.config['end_time'] = end_t
+        self._prune_current_day_data_to_range(start_t, end_t)
         if refresh:
             self.force_refresh_max_geometry()
             self.update()
@@ -266,6 +271,7 @@ class TimeDotsWidget(QWidget):
                 'calendar_today_color': gc('calendar_today_color', self.config['calendar_today_color']),
                 'past_date_color': gc('past_date_color', self.config['past_date_color']),
                 'future_date_color': gc('future_date_color', self.config['future_date_color']),
+                'time_scale_always_on': bool(d.get('time_scale_always_on', False)),
                 'sound_type': d.get('sound_type', 1),
                 'sound_timer': d.get('sound_timer', 2),
                 'sound_note': d.get('sound_note', 1)
@@ -312,6 +318,111 @@ class TimeDotsWidget(QWidget):
         if k not in self.data_store: self.data_store[k] = {"segments": [], "notes": {}}
         return self.data_store[k]
 
+    def _prune_current_day_data_to_range(self, start_t, end_t):
+        key = self._date_key(self.current_view_date)
+        data = self.data_store.get(key)
+        if not isinstance(data, dict):
+            return False
+
+        notes = data.get('notes')
+        segs = data.get('segments')
+        if not isinstance(notes, dict):
+            notes = {}
+        if not isinstance(segs, list):
+            segs = []
+
+        start_abs = self._time_to_minutes(start_t)
+        end_abs = self._time_to_minutes(end_t)
+        if end_abs <= start_abs:
+            end_abs += 24 * 60
+        grid_base = start_t.hour * 60
+        s_off = start_abs - grid_base
+        e_off = end_abs - grid_base
+
+        changed = False
+        kept_notes = {}
+        for key_str, note_val in notes.items():
+            try:
+                idx = int(key_str)
+            except Exception:
+                changed = True
+                continue
+            if s_off <= idx < e_off:
+                kept_notes[str(idx)] = note_val
+            else:
+                changed = True
+
+        kept_segs = []
+        for seg in segs:
+            if not isinstance(seg, dict):
+                changed = True
+                continue
+            try:
+                seg_start = int(seg.get('start'))
+                seg_end = int(seg.get('end'))
+            except Exception:
+                changed = True
+                continue
+
+            clipped_start = max(seg_start, s_off)
+            clipped_end = min(seg_end, e_off)
+            if clipped_end <= clipped_start:
+                changed = True
+                continue
+
+            if clipped_start != seg_start or clipped_end != seg_end:
+                seg = dict(seg)
+                seg['start'] = clipped_start
+                seg['end'] = clipped_end
+                changed = True
+            kept_segs.append(seg)
+
+        if changed:
+            data['notes'] = kept_notes
+            data['segments'] = kept_segs
+        return changed
+
+    def _clear_day_resize_anchor(self):
+        self.day_resize_anchor_mode = None
+        self.day_resize_anchor_idx = -1
+        self.day_resize_anchor_global = None
+
+    def _get_idx_global_pos(self, idx):
+        if idx < 0:
+            return None
+        rd = max(1, self.config['row_duration'])
+        inv = max(1, self.config['interval'])
+        row = idx // rd
+        col = (idx % rd) // inv
+        if row < 0 or col < 0:
+            return None
+        cp = self.get_dot_abs_pos(row, col)
+        return self.mapToGlobal(QPoint(int(round(cp.x())), int(round(cp.y()))))
+
+    def _apply_day_resize_anchor(self):
+        if self.day_resize_anchor_mode != 'start':
+            return
+        if self.day_resize_anchor_idx < 0 or self.day_resize_anchor_global is None:
+            return
+
+        current_global = self._get_idx_global_pos(self.day_resize_anchor_idx)
+        if current_global is None:
+            return
+
+        delta = self.day_resize_anchor_global - current_global
+        if delta.manhattanLength() <= 0:
+            return
+
+        target_pos = self.pos() + delta
+        screen_geo = self.screen().availableGeometry()
+        max_x = screen_geo.right() - self.width() + 1
+        max_y = screen_geo.bottom() - self.height() + 1
+        target_x = max(screen_geo.left(), min(max_x, target_pos.x()))
+        target_y = max(screen_geo.top(), min(max_y, target_pos.y()))
+        self.move(target_x, target_y)
+        self.update_layout_dynamic()
+        self.update_mask()
+
     def get_grid_info(self):
         st = self.config['start_time']
         et = self.config['end_time']
@@ -346,8 +457,9 @@ class TimeDotsWidget(QWidget):
         base = st.hour * 60
         if self.day_resize_mode == 'start' and (self.state == InteractionState.ResizingDayBounds or self.day_resize_cleanup_pending or self.day_resize_anim > 0.001):
             start_abs = st.hour * 60 + st.minute
-            extra = max(1, self.config['row_duration']) * 3
-            base = max(0, start_abs - extra)
+            rd = max(1, self.config['row_duration'])
+            start_row_start = (start_abs // rd) * rd
+            base = max(0, start_row_start - (3 * rd))
             # Keep row origin aligned to exact hour to preserve the original y-axis reading.
             base = (base // 60) * 60
         return base
@@ -485,7 +597,7 @@ class TimeDotsWidget(QWidget):
         expansion = 1.0 + ((self.hover_expansion_ratio - 1.0) * h_val)
         sp_curr = self.config['dot_spacing'] * expansion
         mg = BASE_MARGIN
-        sw = SIDEBAR_WIDTH * h_val
+        sw = SIDEBAR_WIDTH * self.get_time_scale_visibility_ratio(h_val)
         top_m, bottom_m = self.get_vertical_margins(h_val, head_val)
         
         col_unit = r_base * 2 + sp_curr
@@ -567,8 +679,19 @@ class TimeDotsWidget(QWidget):
         expansion = 1.0 + ((self.hover_expansion_ratio - 1.0) * val)
         r = self.config['dot_radius']
         sp = self.config['dot_spacing'] * expansion
-        sw = SIDEBAR_WIDTH * val 
+        sw = SIDEBAR_WIDTH * self.get_time_scale_visibility_ratio(val)
         return r, sp, sw
+
+    def get_time_scale_visibility_ratio(self, hover_val=None):
+        if hover_val is None:
+            hover_val = self._hover_val
+
+        ratio = hover_val
+        if self.config.get('sidebar_always_on', False):
+            ratio = 1.0
+        elif self.config.get('time_scale_always_on', False):
+            ratio = 1.0
+        return max(0.0, min(1.0, ratio))
 
     def get_bg_rect(self):
         return self.current_content_rect
@@ -920,6 +1043,7 @@ class TimeDotsWidget(QWidget):
         if needs_repaint:
             if resize_changed:
                 self.force_refresh_max_geometry()
+                self._apply_day_resize_anchor()
             else:
                 self.update_layout_dynamic()
             self.update()
@@ -933,6 +1057,7 @@ class TimeDotsWidget(QWidget):
             self.day_resize_candidate_offsets = []
             self.day_resize_candidates = []
             self.day_resize_selected_idx = -1
+            self._clear_day_resize_anchor()
 
         # ---------------------------------------------------------
         # 3. [鍘熸湁閫昏緫] 鏃ユ湡鍙樻洿妫€鏌?(淇濇寔涓嶅彉)
@@ -1097,9 +1222,10 @@ class TimeDotsWidget(QWidget):
                 draw_light(y_rect, QColor(255, 189, 46), self.hovered_light_idx == 1)
                 draw_light(g_rect, QColor(39, 201, 63), self.hovered_light_idx == 2)
 
-        # 缁樺埗缃戞牸
-        if self._hover_val > 0.05:
-            op = int(255 * self._hover_val)
+        # 缁樺埗缃戞牸/鏃堕棿鍒诲害
+        time_scale_val = self.get_time_scale_visibility_ratio()
+        if time_scale_val > 0.05:
+            op = int(255 * time_scale_val)
             unified_font = pt.font()
             unified_font.setPixelSize(self.config['font_size'])
             unified_font.setWeight(self.config['font_weight'])
@@ -1205,10 +1331,24 @@ class TimeDotsWidget(QWidget):
         segs = curr_data['segments'][:]
         if self.preview_segment: segs.append(self.preview_segment)
         for s in segs:
+            try:
+                seg_start = int(s.get('start', -1))
+                seg_end = int(s.get('end', -1))
+            except Exception:
+                continue
+            if seg_end <= seg_start:
+                continue
+
+            # Keep segment rendering inside the current visible day range.
+            seg_start = max(seg_start, base_s_off)
+            seg_end = min(seg_end, base_e_off)
+            if seg_end <= seg_start:
+                continue
+
             col = QColor(*s['color'])
             is_hovered = (s == self.hovered_segment)
             is_prev = (s == self.preview_segment)
-            self.draw_segment(pt, s['start'], s['end'], col, s.get('layer', 0), passed_mins, is_today, is_hovered=is_hovered, is_preview=is_prev)
+            self.draw_segment(pt, seg_start, seg_end, col, s.get('layer', 0), passed_mins, is_today, is_hovered=is_hovered, is_preview=is_prev)
 
         if self.day_resize_anim > 0.01:
             self.draw_day_resize_overlay(pt)
@@ -1437,36 +1577,36 @@ class TimeDotsWidget(QWidget):
             return -1
         return s_off
 
-    def _build_day_resize_candidates(self, mode):
+    def _build_day_resize_candidates(self, mode, anchor_minute=None):
         inv = max(1, self.config['interval'])
         rd = max(1, self.config['row_duration'])
         start_min = self._time_to_minutes(self.config['start_time'])
         end_min = self._time_to_minutes(self.config['end_time'])
         if end_min <= start_min:
             end_min += 24 * 60
-        base_min = self.get_grid_base_start_minute()
-        extra_side = 3 * rd
-
+        max_candidate = (24 * 60) - inv
         if mode == 'start':
-            lower = max(0, start_min - extra_side)
-            upper = max(lower, end_min - inv)
-            current_val = start_min
+            start_row_start = (start_min // rd) * rd
+            lower = max(0, start_row_start - (3 * rd))
+            upper = min(max_candidate, max(lower, end_min - inv))
+            current_val = max(lower, min(upper, start_min))
         else:
-            lower = start_min
-            upper = min((24 * 60) - inv, end_min + extra_side)
-            current_val = max(start_min, end_min - inv)
+            lower = max(0, start_min)
+            end_last = max(start_min, end_min - inv)
+            end_row_start = (end_last // rd) * rd
+            upper = min(max_candidate, end_row_start + (4 * rd) - inv)
+            if upper < lower:
+                upper = lower
+            current_val = max(lower, min(upper, end_last))
 
-        if upper < lower:
-            lower, upper = current_val, current_val
-
-        candidates = [c for c in range(lower, upper + 1, inv) if 0 <= c <= (24 * 60) - inv]
+        candidates = [c for c in range(lower, upper + 1, inv) if 0 <= c <= max_candidate]
         if current_val not in candidates:
-            current_clamped = max(0, min((24 * 60) - inv, current_val))
-            candidates.append(current_clamped)
+            candidates.append(current_val)
             candidates = sorted(set(candidates))
 
+        base_min = (min(candidates) // 60) * 60
         self.day_resize_candidate_times = candidates
-        self.day_resize_candidate_offsets = [c - base_min for c in candidates if c >= base_min]
+        self.day_resize_candidate_offsets = [c - base_min for c in candidates]
         self.day_resize_selected_idx = candidates.index(current_val) if current_val in candidates else 0
         self.day_resize_candidates = []
 
@@ -1584,6 +1724,11 @@ class TimeDotsWidget(QWidget):
         if not (QApplication.mouseButtons() & Qt.MouseButton.LeftButton):
             self._clear_pending_day_resize()
             return
+        anchor_global = None
+        if self.pending_boundary_mode == 'start':
+            first_idx_before = self.get_first_dot_idx()
+            anchor_global = self._get_idx_global_pos(first_idx_before)
+
         self.state = InteractionState.ResizingDayBounds
         self.day_resize_cleanup_pending = False
         self.day_resize_mode = self.pending_boundary_mode
@@ -1592,6 +1737,15 @@ class TimeDotsWidget(QWidget):
         self._build_day_resize_candidates(self.day_resize_mode)
         self.force_refresh_max_geometry()
         self._update_day_resize_hitboxes()
+        if self.day_resize_mode == 'start' and anchor_global is not None:
+            start_abs = self._time_to_minutes(self.config['start_time'])
+            anchor_idx = start_abs - self.get_grid_base_start_minute()
+            self.day_resize_anchor_mode = 'start'
+            self.day_resize_anchor_idx = anchor_idx
+            self.day_resize_anchor_global = anchor_global
+            self._apply_day_resize_anchor()
+        else:
+            self._clear_day_resize_anchor()
         sel_idx = self._nearest_day_resize_candidate(self.pending_boundary_pos)
         if sel_idx >= 0:
             self.day_resize_selected_idx = sel_idx
@@ -1996,5 +2150,6 @@ class TimeDotsWidget(QWidget):
     def toggle_lock(self):
         self.is_locked = not self.is_locked
         self.act_lock.setChecked(self.is_locked)
+        self.force_refresh_max_geometry()
         self.update()
 

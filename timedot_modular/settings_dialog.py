@@ -206,6 +206,9 @@ class SettingsDialog(QDialog):
 
         self.font_size_spin = self.create_spinbox(5, 100, self.settings.get('font_size', 11))
         self.cal_font_spin = self.create_spinbox(5, 100, self.settings.get('calendar_font_size', 8))
+        self.time_scale_combo = QComboBox()
+        self.time_scale_combo.addItems(["Off", "On"])
+        self.time_scale_combo.setCurrentIndex(1 if self.settings.get('time_scale_always_on', False) else 0)
         self.font_weight_spin = self.create_spinbox(100, 900, self.settings.get('font_weight', 700), step=100)
         
         # [鏍稿績] 浣跨敤 key 鍙傛暟鏉ヨ嚜鍔ㄦ坊鍔犲乏渚ч噸缃寜閽?
@@ -218,6 +221,8 @@ class SettingsDialog(QDialog):
         self.add_row(vg_layout, "Time Font Size", self.font_size_spin, key='font_size')
         self.add_separator(vg_layout)
         self.add_row(vg_layout, "Calendar Font Size", self.cal_font_spin, key='calendar_font_size')
+        self.add_separator(vg_layout)
+        self.add_row(vg_layout, "Always Show Time Scale", self.time_scale_combo)
         self.add_separator(vg_layout)
         self.add_row(vg_layout, "Font Weight", self.font_weight_spin, key='font_weight', is_last=True)
         
@@ -389,6 +394,7 @@ class SettingsDialog(QDialog):
         self.note_scale_spin.valueChanged.connect(self.sync_settings)
         self.font_size_spin.valueChanged.connect(self.sync_settings)
         self.cal_font_spin.valueChanged.connect(self.sync_settings)
+        self.time_scale_combo.currentIndexChanged.connect(self.sync_settings)
         self.font_weight_spin.valueChanged.connect(self.sync_settings)
         
         self.seg_offset_spin.valueChanged.connect(self.sync_settings)
@@ -405,6 +411,7 @@ class SettingsDialog(QDialog):
         self.note_scale_spin.setValue(defaults['note_dot_scale'])
         self.font_size_spin.setValue(defaults['font_size'])
         self.cal_font_spin.setValue(defaults['calendar_font_size'])
+        self.time_scale_combo.setCurrentIndex(0)
         self.font_weight_spin.setValue(defaults['font_weight'])
         self.seg_offset_spin.setValue(defaults['seg_base_offset'])
         self.seg_step_spin.setValue(defaults['seg_layer_step'])
@@ -472,6 +479,7 @@ class SettingsDialog(QDialog):
         self.settings['note_dot_scale'] = self.note_scale_spin.value()
         self.settings['font_size'] = self.font_size_spin.value()
         self.settings['calendar_font_size'] = self.cal_font_spin.value()
+        self.settings['time_scale_always_on'] = (self.time_scale_combo.currentIndex() == 1)
         self.settings['font_weight'] = self.font_weight_spin.value()
         
         self.settings['seg_base_offset'] = self.seg_offset_spin.value()

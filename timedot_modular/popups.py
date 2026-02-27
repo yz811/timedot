@@ -1,6 +1,6 @@
 ﻿from PyQt6.QtWidgets import QDialog, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QFrame, QTextEdit
-from PyQt6.QtCore import Qt, QPoint, QRect, QRectF, QPropertyAnimation, QEasingCurve, QPointF
-from PyQt6.QtGui import QPainter, QBrush, QColor, QCursor, QFont, QPen, QFontMetrics, QGuiApplication
+from PyQt6.QtCore import Qt, QPoint, QRect, QRectF, QPropertyAnimation, QEasingCurve, QPointF, QEvent
+from PyQt6.QtGui import QPainter, QBrush, QColor, QCursor, QFont, QPen, QFontMetrics, QGuiApplication, QKeyEvent
 
 class OverlayTooltip(QWidget):
     def __init__(self, text, parent=None):
@@ -30,7 +30,12 @@ class OverlayTooltip(QWidget):
 class EditPopup(QDialog):
     def __init__(self, parent=None, initial_color=None, initial_text="", default_color=None, on_save=None, on_delete=None, on_live_change=None):
         super().__init__(parent)
-        self.setWindowFlags(Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint | Qt.WindowType.NoDropShadowWindowHint)
+        self.setWindowFlags(
+            Qt.WindowType.Popup
+            | Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.NoDropShadowWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint
+        )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.on_save = on_save
         self.on_delete = on_delete
@@ -67,6 +72,7 @@ class EditPopup(QDialog):
         self.text_edit.setFixedHeight(60)
         self.text_edit.setStyleSheet("QTextEdit { color: white; background-color: #444; border: 1px solid #555; border-radius: 4px; padding: 4px; }") 
         self.text_edit.textChanged.connect(self.handle_live_change)
+        self.text_edit.installEventFilter(self)
         layout.addWidget(self.text_edit)
         
         btn_layout = QHBoxLayout()
@@ -104,6 +110,24 @@ class EditPopup(QDialog):
     def handle_delete(self):
         if self.on_delete: self.on_delete()
         self.reject()
+
+    def _is_submit_key(self, event: QKeyEvent):
+        if event.key() not in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            return False
+        return not bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+
+    def eventFilter(self, obj, event):
+        if obj is self.text_edit and event.type() == QEvent.Type.KeyPress and self._is_submit_key(event):
+            self.handle_save()
+            return True
+        return super().eventFilter(obj, event)
+
+    def keyPressEvent(self, event):
+        if self._is_submit_key(event):
+            self.handle_save()
+            return
+        super().keyPressEvent(event)
+
     def showEvent(self, event):
         super().showEvent(event)
         self.text_edit.setFocus()
